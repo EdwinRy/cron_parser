@@ -1,0 +1,315 @@
+# Cron Expression Parser design document
+## Analysing the problem
+We are tasked with creating a command line application which is capable of 
+parsing individual entries of a cron job and then outputting the times at which 
+the command given to the cron job would run.
+
+### Requirements
+- It should run on the command line
+- We should not depend on any cron parser libraries
+- We should only consider the standard cron format
+    - Five time fields
+    - One command field
+    - No need to handle special strings such as `@hourly` or `@reboot`
+        - optional?
+- The input is a single line
+- The cron string is a single argument to the program
+- The output is written to stdout in form of a 2-column table
+    - The first column is the field name containing the following fields, it is 
+    exactly 14 characters wide
+        - minute
+        - hour
+        - day of month
+        - month
+        - day of week
+        - command
+    - The second column contains the values for each field corresponding to the 
+    times at which the command will run, those times are space-separated
+- The solution has to be extensible as that is expected to happen
+- Code should be covered with relevant test cases
+- It should run on MacOS and Linux
+- It should contain a README and instructions for how to run the project from a 
+fresh installation of the OS
+
+### Additional requirements
+These are the requirements which haven't been asked for specifically but are 
+a standard part of any CLI application
+- The program should note it's usage if wrong number of arguments is provided
+- It should be able to handle edge cases gracefully
+- It should provide an error message based on where the error occurred
+- Most Unix utilities (and the file system) are encoded with UTF-8, so our 
+program should be able to handle it as well
+
+
+## Cron jobs
+Cron is a tool for scheduling tasks to run on unix systems. A cron job refers 
+to a single task scheduled within the cron configuration; cron jobs are managed 
+as entries in a "crontab" file and are a single line of text per task. 
+
+Crontab entries can be edited per user with 
+```bash
+crontab -u <username> -e
+```
+
+There is a system-wide cron directory most commonly under `/etc/cron.d` which 
+contains files with crontab entries for all users on the system.
+
+There are more configurations for crontab files which are not relevant to this 
+project as we assume we're only dealing with the most common use case for cron.
+
+
+### Cron format
+A cron entry consists of 6 parts, separated by spaces.
+The first 5 parts are time fields, and the 6th part lists a command to be 
+executed on times specified by the time fields.
+
+Cron entries may also contain special strings which replace the 5 time fields.
+We won't cover those in this project as per requirements.
+
+The command part is executed for the user as if they were to run the command 
+themselves along with the arguments, there isn't any additional parsing 
+required for the command part.
+
+Each of the time fields corresponds to a given time in this order:
+- minute (0-59)
+- hour (0-23)
+- day of the month (0-31)
+- month (1-12)
+- day of the week (0-6)
+
+Each time field supports a set of operators to further specify the timing:
+- `*` - any value
+- `,` - separates multiple values
+- `-` - include all numbers between values
+- `/` - divide values into steps
+
+Notes:  
+Days of the week can also be based on names: SUN to SAT, however that doesn't 
+work on every distribution of crontab and so we won't be supporting it.  
+There are also additional operators which we won't be supporting in this 
+project as it doesn't follow the standard cron format (at least as defined by 
+the linux man pages for crontab(5)).
+
+### Cron operators
+Cron job operators add complexity to our parser since a value of each token 
+within a field depends on the context of the expression defined by the operators 
+present.
+
+#### `*`
+The asterisk operator means any, if it is present in a time field then it means 
+that the command will run for every value of that field, it is affected by the 
+`/` operator to split every value of a field into steps.
+
+The following will execute the command every 15 of the minute value 
+(every 15 minutes), every hour, every day, and so on...:
+
+```
+*/15 * * * * /usr/bin/find
+```
+
+#### `,`
+The comma operator is used to list additional values per field, it has the least 
+precedence over other operators and so it's relatively easy to parse.
+
+The following task will execute at minutes 5 and 10 of every hour
+```
+5,10 * * * * /usr/bin/find
+```
+
+#### `-`
+The dash operator is used to specify a range of values for a field, it takes 
+highest precedence, over both slash and comma operators. The asterisk operator 
+cannot be used in range expressions
+
+The following task will for every minute between 5 and 10 of every hour
+```
+5-10 * * * * /usr/bin/find
+```
+
+The following task will for every minute between 5 and 10 of every hour and 
+every minute between 40 and 50
+```
+5-10,40-50 * * * * /usr/bin/find
+```
+
+#### `/`
+The slash operator is used to split a range of values into steps: on the left 
+side of the operator is a range of values (single values are not standard and 
+therefore we will omit those), and on the right side is the step value. 
+The execution of the command will start from the lowest value of the specified 
+range.
+
+The following task will execute every 15 minutes of every hour
+```
+*/15 * * * * /usr/bin/find
+```
+
+The following task will execute every 2nd minute from 10th minute to 16th minute
+```
+10-16/2 * * * * /usr/bin/find
+```
+
+## Solution design
+### High-level design
+Whilst the cron tab format is relatively simple, the presence of somewhat 
+complicated operators and the requirement for extensibility means that we 
+should consider how we approach the parsing of time fields specifically.  
+
+A naive approach would be to simply take the input string, split it into 6 
+parts by strings, split each time field by comma and deal with each value 
+individually. 
+
+Because the cron string format is regular, we could even use regular expressions 
+to parse the whole string with a long complicated expression.
+
+There are quite a few problems with this approach:
+- Regular expressions are hard to work with and even harder to maintain
+- We specified in our requirements that this needs to be easy to extend
+- It's harder to handle edge cases
+- Error handling is not as easy as it could be
+- It is harder to test individual parts of the program independently
+
+Despite the negatives there are quite a few positives to this approach:
+- It is very fast to code
+- The resulting code is really performant due to regex implementation
+
+
+Instead of using regular expressions, we could define a grammar for our cron 
+strings, a grammar would be much easier to extend and maintain. There are tons 
+of tools which can generate a parser from a grammar, however, the requirements 
+specifically mentioned to not use any cron parsers - I will take the assumption 
+that parser generators are also not allowed.
+
+The approach I will take is a very simple recursive descent parser which will 
+produce a data structure which is already in the format we want to print to the 
+user.
+
+The positives of this approach are:
+- It is easy to extend and maintain
+- The parser can be split into stages and individual stateless functions which 
+are much easier to test
+- It is easy to handle edge cases
+- It is easy to handle errors and provide diagnostics
+
+However, there are quite a few drawbacks:
+- Might be more time consuming initially
+- Might not be as performant without the proper optimisations
+
+Given our limitations and requirements I believe we could achieve best results 
+by writing a simple parser which extracts meaning from our cron string in a 
+few passes to maintain simplicity of each stage.
+
+I will write a top-down recursive descent parser with lookahead and limited 
+backtracking to hopefully strike the balance between simplicity, performance 
+and testability.
+
+
+### Language choice
+There are quite a few requirements that we have to consider when picking our 
+language:
+
+- It should be able to produce an executable that we can run from the terminal
+- The solution should be able to run on unix systems (both linux and macos)
+    - This also means we have a few CPU architectures to consider
+- It should be simple to setup and run
+- It should be easy to work with under a time constraint
+- It should be easy to test
+
+From these requirements, I've collected a few languages to consider which 
+might be good for the job:
+
+#### Rust
+##### positives:
+- It compiles down to an executable
+- It has a great type system for compiler design
+- Installation and distribution is really easy
+- Great string manipulation capabilities
+##### negatives:
+- The borrow checker makes working under a time constraint more difficult
+- Hard to learn for new developers
+
+#### Python
+##### positives:
+- Really forgiving type system for prototyping
+- Cross platform runtime
+- Easy to work with
+##### negatives:
+- Does not compile well (typically requires a python installation on the target), 
+in order to run without prefixing the script with the `python` command the file 
+has to be set as executable within the unix filesystem (wouldn't work 
+too well on windows)
+- Not the best error handling
+- Dynamic typing sometimes leads to runtime errors
+
+#### Golang
+##### positives:
+- It compiles down to an executable
+- Fast to prototype quickly
+- Great error handling and testing utilities
+- Great for command line tooling
+- Handles UTF-8 really well
+##### negatives:
+- Not the greatest string library
+- Type system not as expansive as Rust's
+
+
+
+In the end I have decided to go with golang since it presented the most positives 
+and least negatives for the requirements. It is also easy to train people to use 
+in case a developer is not familiar with the language.
+
+
+### Solution architecture
+My solution is very similar to how a frontend of a compiler works. Typical 
+stages of a compiler consist of: lexical analysis, syntax analysis, semantic 
+analysis, intermediate code generation, code optimisations, code generation; 
+in this order, the stages also share a symbol table and error handling, we don't 
+need a symbol table as there are no symbols to store and we don't need to manage 
+errors across the whole parser.  
+We also only need the first 3 stages in order to have all the meaning we need to 
+fulfil our requirements.
+
+In comparison to a typical compiler our pipeline looks something like this:
+![Where our parser fits in the compiler stages](assets/image.png)
+
+#### Tokenization
+The tokenizer is responsible for converting our raw string into an array of 
+tokens which are easier to work with and remove a variety of edge cases.
+
+#### Parsing
+The parser will take the array of tokens from our tokenizer and turn it into 
+a tree structure, each node within this tree will hold a list of children and 
+a value. The value, if present, is a string representation of some value 
+relevant to the context (like the command)
+
+At this stage we can make slightly more powerful checks on the structure of the 
+initial strings, we can check if each field is in the correct format for example 
+or reject ranges which have incorrect types of data associated.
+
+#### Semantic analysis
+Semantic analysis is where we can stop as we derive a data structure storing 
+each of the 5 fields, with their values, and the command. As we travel down 
+the abstract syntax tree we check whether the provided values are valid in 
+context of the cron tab rules and can provide very detailed error messages in 
+case they are not.
+
+## Debugging
+
+The program is capable of outputting each stage of the process, the program 
+looks for the presence of a `DEBUG` environment variable, if it is present 
+(regardless of the value), the program will output each stage to the console.
+
+Try running the following command:
+```bash
+DEBUG=1 go run cronParser "*/15 0 1,15 * 1-5 /usr/bin/find"
+```
+
+## Trade-offs
+### Parser
+- In order to keep values on every node of the tree, there's some repetition 
+when storing the strings, ideally we would store a start and end pointers 
+to the original string. Due to time constraints and considering how small a 
+typical cron string is I decided to go with this approach.
+- Some of the errors are not as intuitive as they could be for a production 
+system, however coding them takes time away from the requirements with higher 
+priority.

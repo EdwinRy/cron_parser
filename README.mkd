@@ -1,0 +1,83 @@
+# Cron Expression Parser
+
+The Cron Expression Parser is a command line utility which takes in a single 
+line of a cron job expression and prints out a table of values describing 
+at what times the cron job would run.
+
+## Quick Start
+In order to use this program, you have to either compile it and run the 
+executable, or use the `go run command`.  
+There is a Makefile provided to compile the program into a single 
+executable called `cronParser` in the root of this project. If you have access 
+to `make` and the go-lang 1.21 compiler in path you can run the following 
+command from the root of this project to compile the program.
+```bash
+make
+```
+In order to run the program with sample input:
+```bash
+./cronParser "*/15 0 1,15 * 1-5 /usr/bin/find"
+```
+
+### Using go without make
+
+If `make` is unavailable on your system but you have a valid go 1.21 
+installation on your system and in path you can either compile it manually 
+using commands found in the `Makefile` or you can run the following command 
+from the root of project
+
+```bash
+go run cronParser "*/15 0 1,15 * 1-5 /usr/bin/find"
+```
+
+If you do not have go installed on your system, check out 
+[installing dependencies](#installing-dependencies)
+
+### Releases
+
+There are a few pre-made releases found in the `releases` folder, these have 
+been testes on darwin/amd64, darwin/arm64, and linux/amd64, it is not guaranteed 
+they they will work on other systems.
+
+## Usage
+
+The command is to be ran in the following format:
+
+```bash
+./cronParser "<cron string>"
+```
+
+The output of the command will look as follows:
+
+```bash
+$ ./cronParser "*/15 0 1,15 * 1-5 /usr/bin/find"
+minute        0 15 30 45
+hour          0
+day of month  1 15
+month         1 2 3 4 5 6 7 8 9 10 11 12
+day of week   1 2 3 4 5
+command       /usr/bin/find
+```
+
+## Installing Dependencies
+
+### Go 1.21
+As of January 2024, go1.21.6 is the latest stable release of go, you can 
+download it for your system from the [official go-lang website](https://go.dev/dl/)
+
+go installation instructions are available [here](https://go.dev/doc/install)
+
+If you are on MacOS and/or have [homebrew](https://brew.sh) installed you can 
+install go using
+```bash
+brew install go@1.21
+```
+
+In case you have a different version of go installed on your system you can 
+either replace it with go 1.21 or follow the official guide for managing 
+multiple go installs [here](https://go.dev/doc/manage-install)
+
+## Docs
+The `documentation.mkd` file at the root of this project outlines the decision 
+making and designs behind this project. It is recommended you use a markdown 
+viewer (vscode works really well for that) for a better reading experience.

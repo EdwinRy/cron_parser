@@ -1,0 +1,18 @@
+
+(* Any number of characters (at least 1) until the end of the string *)
+command = r".+$"
+
+digits = r"\d+"
+timeVal = "*" | digits
+
+timeRange = digits, "-", digits
+
+timeSteps = "*" | timeRange, "/", timeVal
+
+timePart = timeSteps | timeRange | timeVal
+
+timeExpr = {timePart, ","} | timePart
+
+timeField = timeExpr, " "
+
+task = 5 * timeField, command
